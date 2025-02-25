@@ -1,6 +1,7 @@
+#!/usr/bin/env python3
 from telethon import TelegramClient, events
 from telethon.tl.functions.messages import GetDialogsRequest
-from telethon.tl.types import InputPeerEmpty
+from telethon.tl.types import InputPeerEmpty, Channel, User
 import asyncio
 import os
 from configparser import ConfigParser
@@ -13,8 +14,8 @@ config_file = 'config.ini'
 def create_config():
     if not os.path.exists(config_file):
         config['Telegram'] = {
-            'api_id': 'YOUR_API_ID',
-            'api_hash': 'YOUR_API_HASH',
+            'api_id': '17349',
+            'api_hash': '344583e45741c457fe1862106095a5eb',
             'phone': 'YOUR_PHONE_NUMBER',
             'session_name': 'message_editor'
         }
@@ -53,7 +54,7 @@ async def setup_client():
     print("Client successfully connected!")
     return client
 
-# Get list of dialogs (chats and groups)
+# Get list of dialogs (private chats, groups, and supergroups only - no channels or bots)
 async def get_dialogs(client):
     result = await client(GetDialogsRequest(
         offset_date=None,
@@ -64,26 +65,53 @@ async def get_dialogs(client):
     ))
     
     dialogs = result.dialogs
+    filtered_dialogs = []
     
-    print("\nAvailable groups:")
+    print("\nAvailable chats and groups (no channels or bots):")
+    dialog_count = 0
+    
     for i, dialog in enumerate(dialogs):
         try:
-            group = await client.get_entity(dialog.peer)
-            print(f"{i}: {group.title}")
-        except:
+            entity = await client.get_entity(dialog.peer)
+            
+            # Check if entity is a broadcast channel
+            is_broadcast_channel = isinstance(entity, Channel) and entity.broadcast
+            
+            # Check if entity is a bot
+            is_bot = isinstance(entity, User) and entity.bot
+            
+            # Include only private chats, groups, and supergroups (exclude bots and broadcast channels)
+            if not is_broadcast_channel and not is_bot:
+                filtered_dialogs.append(dialog)
+                title = entity.title if hasattr(entity, 'title') else (
+                    f"{entity.first_name} {entity.last_name}" if hasattr(entity, 'last_name') and entity.last_name else 
+                    entity.first_name if hasattr(entity, 'first_name') else 
+                    "Unknown"
+                )
+                # Add a tag to identify the type of chat
+                chat_type = "Group" if hasattr(entity, 'title') else "Private"
+                print(f"{dialog_count}: {title} [{chat_type}]")
+                dialog_count += 1
+                
+        except Exception as e:
             continue
     
-    return dialogs
+    return filtered_dialogs
 
 # Setup message monitoring
 async def setup_monitoring(client, dialogs):
     # Ask for group to monitor
-    group_index = int(input("\nEnter the number of the group to monitor: "))
+    group_index = int(input("\nEnter the number of the chat or group to monitor: "))
     
     try:
         target_dialog = dialogs[group_index]
         target_group = await client.get_entity(target_dialog.peer)
-        group_title = target_group.title
+        
+        # Get name or title depending on chat type
+        if hasattr(target_group, 'title'):
+            group_title = target_group.title
+        else:
+            group_title = f"{target_group.first_name} {target_group.last_name}" if hasattr(target_group, 'last_name') and target_group.last_name else target_group.first_name
         
         # Save selected group to config
         config['Bot']['target_group'] = str(target_group.id)
@@ -120,18 +148,31 @@ async def main():
     append_text = config['Bot'].get('append_text')
     
     # If no target group or user wants to change it
-    if not target_group_id or input("Do you want to change the target group? (y/n): ").lower() == 'y':
+    if not target_group_id or input("Do you want to change the target chat/group? (y/n): ").lower() == 'y':
         dialogs = await get_dialogs(client)
+        if not dialogs:
+            print("No suitable chats or groups found.")
+            return
         target_group_id = await setup_monitoring(client, dialogs)
         if not target_group_id:
             return
     else:
         try:
             target_entity = await client.get_entity(int(target_group_id))
-            print(f"Monitoring messages in: {target_entity.title}")
+            
+            # Get name or title depending on chat type
+            if hasattr(target_entity, 'title'):
+                entity_name = target_entity.title
+            else:
+                entity_name = f"{target_entity.first_name} {target_entity.last_name}" if hasattr(target_entity, 'last_name') and target_entity.last_name else target_entity.first_name
+                
+            print(f"Monitoring messages in: {entity_name}")
         except Exception as e:
-            print(f"Error retrieving group info: {e}")
+            print(f"Error retrieving chat/group info: {e}")
             dialogs = await get_dialogs(client)
+            if not dialogs:
+                print("No suitable chats or groups found.")
+                return
             target_group_id = await setup_monitoring(client, dialogs)
             if not target_group_id:
                 return
