@@ -1,0 +1,1 @@
+Simple telegram user-bot to monitor your mesages in specific chat and add pre-defined text to it
